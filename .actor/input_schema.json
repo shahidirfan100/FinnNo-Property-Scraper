@@ -1,0 +1,58 @@
+{
+  "title": "Finn.no Property Scraper",
+  "description": "Scrape homes for sale listings from Finn.no. Use the default search page or provide a filtered Finn search URL, then enrich each result with property details from the ad page.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "startUrl": {
+      "title": "Start URL",
+      "type": "string",
+      "description": "A Finn homes-for-sale search URL. Use this for exact site-side filters such as area, price, ownership type, or listing status.",
+      "editor": "textfield",
+      "prefill": "https://www.finn.no/realestate/homes/search.html"
+    },
+    "keyword": {
+      "title": "Keyword filter",
+      "type": "string",
+      "description": "Optional text filter matched against listing titles, addresses, and scraped detail text.",
+      "editor": "textfield",
+      "prefill": ""
+    },
+    "location": {
+      "title": "Location filter",
+      "type": "string",
+      "description": "Optional text filter matched against the location or address text already visible on Finn pages.",
+      "editor": "textfield",
+      "prefill": ""
+    },
+    "results_wanted": {
+      "title": "Maximum number of listings",
+      "type": "integer",
+      "description": "The maximum number of dataset items to save.",
+      "minimum": 1,
+      "default": 20,
+      "prefill": 20,
+      "editor": "number"
+    },
+    "max_pages": {
+      "title": "Maximum number of search pages",
+      "type": "integer",
+      "description": "Safety cap for paginated search result pages.",
+      "minimum": 1,
+      "default": 5,
+      "prefill": 2,
+      "editor": "number"
+    },
+    "proxyConfiguration": {
+      "title": "Proxy configuration",
+      "type": "object",
+      "description": "Optional proxy settings. The default flow works without a proxy, but Apify Proxy can help with larger runs.",
+      "editor": "proxy",
+      "default": {
+        "useApifyProxy": false
+      }
+    }
+  },
+  "required": [],
+  "additionalProperties": false
+}

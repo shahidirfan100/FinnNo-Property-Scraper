@@ -1,0 +1,67 @@
+{
+  "actorSpecification": 1,
+  "fields": {
+    "title": "Title",
+    "address": "Address",
+    "property_type": "Property Type",
+    "asking_price": "Asking Price",
+    "total_price": "Total Price",
+    "bedrooms": "Bedrooms",
+    "usable_area_sqm": "Usable Area",
+    "url": "URL"
+  },
+  "views": {
+    "overview": {
+      "title": "Overview",
+      "transformation": {
+        "fields": [
+          "title",
+          "address",
+          "property_type",
+          "asking_price",
+          "total_price",
+          "bedrooms",
+          "usable_area_sqm",
+          "url"
+        ]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "title": {
+            "label": "Title",
+            "format": "text"
+          },
+          "address": {
+            "label": "Address",
+            "format": "text"
+          },
+          "property_type": {
+            "label": "Type",
+            "format": "text"
+          },
+          "asking_price": {
+            "label": "Asking",
+            "format": "text"
+          },
+          "total_price": {
+            "label": "Total",
+            "format": "text"
+          },
+          "bedrooms": {
+            "label": "Bedrooms",
+            "format": "number"
+          },
+          "usable_area_sqm": {
+            "label": "Area sqm",
+            "format": "number"
+          },
+          "url": {
+            "label": "URL",
+            "format": "link"
+          }
+        }
+      }
+    }
+  }
+}
