@@ -112,11 +112,11 @@ session holds a valid cookie for the whole run.
 Apify's datacenter proxy passed on the first attempt with headed Chrome and the
 in-page fetch flow:
 
-| Run | Input                    | Result                             |
-| --- | ------------------------ | ---------------------------------- |
-| 1   | 5 listings, 1 page       | 5 saved, 1 request, 0 challenges   |
-| 2   | 60 listings, 2 pages     | 60 saved, 2 requests, 0 challenges |
-| 3   | Detail URL as `startUrl` | exit code 1 with a clear message   |
+| Run | Input                    | Result                                        |
+| --- | ------------------------ | --------------------------------------------- |
+| 1   | 5 listings, 1 page       | 5 saved, 1 request, 0 challenges              |
+| 2   | 60 listings, 2 pages     | 60 saved, 2 requests, 0 challenges, 64 fields |
+| 3   | Detail URL as `startUrl` | exit code 1 with a clear message              |
 
 Every listing came from the search payload. No listing page was loaded, and the
 request count matched the page count.
