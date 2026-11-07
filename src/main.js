@@ -94,16 +94,6 @@ function countEmptyValues(value) {
     return value === null || value === undefined || value === '' ? 1 : 0;
 }
 
-function extractFinnCode(value) {
-    const normalized = String(value || '');
-    return (
-        normalized.match(/finnkode=(\d+)/i)?.[1] ||
-        normalized.match(/FINN-kode\s*(\d+)/i)?.[1] ||
-        normalized.match(/\/([0-9]{6,})$/)?.[1] ||
-        undefined
-    );
-}
-
 function firstNumber(...values) {
     return values.find((value) => typeof value === 'number' && Number.isFinite(value));
 }
@@ -118,22 +108,6 @@ function formatDate(value) {
     if (!value) return undefined;
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? normalizeWhitespace(value) : date.toISOString();
-}
-
-function stripMarkup(value) {
-    if (!value) return undefined;
-
-    return normalizeWhitespace(
-        String(value)
-            .replace(/<br\s*\/?>/gi, ' ')
-            .replace(/<[^>]+>/g, ' ')
-            .replace(/&nbsp;/gi, ' ')
-            .replace(/&amp;/gi, '&')
-            .replace(/&lt;/gi, '<')
-            .replace(/&gt;/gi, '>')
-            .replace(/&quot;/gi, '"')
-            .replace(/&#39;/gi, "'"),
-    );
 }
 
 function safeJsonParse(value) {
@@ -226,12 +200,6 @@ function getSearchResults(payload) {
     return results;
 }
 
-function getDetailData(payload) {
-    const detail = findObject(payload, (value) => value.objectData?.ad && typeof value.objectData.ad === 'object');
-    if (!detail) throw new Error('Detail payload did not contain objectData.ad');
-    return detail;
-}
-
 function decodePayload(body) {
     const trimmed = body.trimStart();
     let references;
@@ -284,15 +252,6 @@ function toPageReferer(value) {
     return url.href;
 }
 
-function toDetailUrl(value) {
-    const url = new URL(value, BASE_URL);
-    const match = url.pathname.match(/^\/realestate\/([^/]+)\/ad\.html(?:\.data)?$/i);
-
-    if (!match) return undefined;
-    url.pathname = `/realestate/${match[1]}/ad.html`;
-    return url.href;
-}
-
 function formatViewingEntry(entry) {
     if (typeof entry === 'string') return entry;
     if (!entry || typeof entry !== 'object') return undefined;
@@ -306,44 +265,6 @@ function normalizeViewingEntries(viewings) {
     return uniqueValues((Array.isArray(viewings) ? viewings : []).map(formatViewingEntry).filter(Boolean));
 }
 
-function normalizeLinks(links) {
-    return (Array.isArray(links) ? links : [])
-        .map((link) =>
-            pruneRecord({
-                url: sanitizeUrl(link?.uri || link?.url || link?.href),
-                title: link?.title || link?.text,
-            }),
-        )
-        .filter(Boolean);
-}
-
-function normalizeMedia(items) {
-    return (Array.isArray(items) ? items : [])
-        .map((item) =>
-            pruneRecord({
-                url: sanitizeUrl(item?.uri || item?.url || item?.value),
-                width: item?.width,
-                height: item?.height,
-                description: stripMarkup(item?.description),
-            }),
-        )
-        .filter(Boolean);
-}
-
-function parseCompanyProfile(profileModule) {
-    const content = profileModule?.content;
-    if (!content) return undefined;
-
-    const match = String(content).match(/<script[^>]*data-company-profile-data[^>]*>([\s\S]*?)<\/script>/i);
-    const parsed = match ? safeJsonParse(match[1].trim()) : undefined;
-    return parsed?.companyProfile || parsed?.extendedProfileRealEstate;
-}
-
-function findHomepage(profile) {
-    const link = profile?.customLinks?.find((item) => /hjemmeside|homepage/i.test(item?.text || ''));
-    return sanitizeUrl(link?.url);
-}
-
 function mapSearchDocument(document, subvertical) {
     const finnkode = String(document?.finnkode || document?.ad_id || document?.id || '');
     const coordinates = document?.coordinates || {};
@@ -352,11 +273,19 @@ function mapSearchDocument(document, subvertical) {
         sanitizeUrl(document?.canonical_url) || sanitizeUrl(`/realestate/${subvertical}/ad.html?finnkode=${finnkode}`);
     const timestamp = document?.timestamp;
     const suggestion = document?.price_suggestion || {};
+    const suggestionRange = document?.price_range_suggestion || {};
     const total = document?.price_total || {};
+    const totalRange = document?.price_range_total || {};
     const sharedCost = document?.price_shared_cost || {};
+    const bedroomsRange = document?.bedrooms_range || {};
+    const areaRange = document?.area_range || {};
+    const plotArea = document?.area_plot || {};
     const image = document?.image || {};
     const logo = document?.logo || {};
+    const features = Array.isArray(document?.features) ? document.features : [];
 
+    // Every key the search payload offers is mapped here, so a run needs one
+    // request per page and never loads a listing page.
     return pruneRecord({
         finnkode: finnkode || undefined,
         url: canonicalUrl,
@@ -365,30 +294,45 @@ function mapSearchDocument(document, subvertical) {
         title: document?.heading,
         address: document?.location,
         local_area_name: document?.local_area_name,
+        price_currency: suggestion.currency_code || total.currency_code,
         asking_price: formatMoney(suggestion.amount, suggestion.currency_code),
         asking_price_nok: suggestion.amount,
         asking_price_unit: suggestion.price_unit,
+        asking_price_from: formatMoney(suggestionRange.amount_from, suggestionRange.currency_code),
+        asking_price_to: formatMoney(suggestionRange.amount_to, suggestionRange.currency_code),
+        asking_price_from_nok: suggestionRange.amount_from,
+        asking_price_to_nok: suggestionRange.amount_to,
         total_price: formatMoney(total.amount, total.currency_code),
         total_price_nok: total.amount,
         total_price_unit: total.price_unit,
+        total_price_from: formatMoney(totalRange.amount_from, totalRange.currency_code),
+        total_price_to: formatMoney(totalRange.amount_to, totalRange.currency_code),
+        total_price_from_nok: totalRange.amount_from,
+        total_price_to_nok: totalRange.amount_to,
         shared_costs_month: formatMoney(sharedCost.amount, sharedCost.currency_code),
         shared_costs_month_nok: sharedCost.amount,
         shared_costs_unit: sharedCost.price_unit,
         property_type: document?.property_type_description,
         ownership_type: document?.owner_type_description,
         bedrooms: document?.number_of_bedrooms,
-        usable_area_sqm: firstNumber(document?.area_range?.size_from, document?.area_range?.size_to),
-        usable_area_sqm_from: document?.area_range?.size_from,
-        usable_area_sqm_to: document?.area_range?.size_to,
-        area_unit: document?.area_range?.unit,
-        lot_area_sqm: document?.area_plot?.size,
-        lot_area_unit: document?.area_plot?.unit,
+        bedrooms_from: bedroomsRange.start,
+        bedrooms_to: bedroomsRange.end,
+        usable_area_sqm: firstNumber(areaRange.size_from, areaRange.size_to),
+        usable_area_sqm_from: areaRange.size_from,
+        usable_area_sqm_to: areaRange.size_to,
+        area_unit: areaRange.unit,
+        area_description: areaRange.description,
+        lot_area_sqm: plotArea.size,
+        lot_area_unit: plotArea.unit,
+        lot_area_description: plotArea.description,
         latitude: coordinates.lat,
         longitude: coordinates.lon,
         coordinate_accuracy: coordinates.accuracy,
         broker_company: document?.organisation_name,
         broker_logo_url: sanitizeUrl(logo.url),
+        broker_logo_path: logo.path,
         image_url: sanitizeUrl(image.url),
+        image_path: image.path,
         image_width: image.width,
         image_height: image.height,
         image_aspect_ratio: image.aspect_ratio,
@@ -402,7 +346,8 @@ function mapSearchDocument(document, subvertical) {
         document_type: document?.type,
         labels: document?.labels,
         listing_flags: document?.flags,
-        features: document?.features,
+        features,
+        features_text: features.length ? features.join(', ') : undefined,
         styling: document?.styling,
         extras: document?.extras,
         is_private_broker: Array.isArray(document?.labels)
@@ -418,182 +363,6 @@ function mapSearchDocument(document, subvertical) {
         ]
             .filter(Boolean)
             .join(' '),
-    });
-}
-
-function mapDetailData(detailData, summary, requestUrl) {
-    const ad = detailData?.objectData?.ad || {};
-    const meta = detailData?.objectData?.meta || {};
-    const location = ad.location || {};
-    const position = location.position || {};
-    const price = ad.price || {};
-    const size = ad.size || {};
-    const profile = parseCompanyProfile(detailData.companyProfile) || {};
-    const contact = profile.contacts?.[0] || ad.contact?.[0] || {};
-    const images = normalizeMedia(ad.images);
-    const floorplans = normalizeMedia(
-        ad.floorplans || detailData.floorPlanImages || detailData.interactiveFloorPlansImages,
-    );
-    const documents = normalizeLinks(ad.documents);
-    const moreInfoLinks = normalizeLinks(ad.moreInfoLinks);
-    const viewings = normalizeViewingEntries(ad.viewings);
-    const descriptionSections = uniqueValues(
-        [
-            ...(Array.isArray(ad.propertyInfo)
-                ? ad.propertyInfo.map((section) =>
-                      [section?.title, stripMarkup(section?.content)].filter(Boolean).join(': '),
-                  )
-                : []),
-            ...(Array.isArray(ad.generalText)
-                ? ad.generalText.map((section) =>
-                      [section?.heading, stripMarkup(section?.textUnsafe)].filter(Boolean).join(': '),
-                  )
-                : []),
-        ].filter(Boolean),
-    );
-    const firstDescription =
-        descriptionSections.find((section) => /om boligen|om eiendommen|kort om/i.test(section)) ||
-        descriptionSections[0];
-    const homepageUrl = findHomepage(profile);
-    const disposed = Boolean(meta.disposed?.value);
-    const linkByTitle = (pattern) => moreInfoLinks.find((link) => pattern.test(link.title || ''))?.url;
-    const address = [location.streetAddress, [location.postalCode, location.postalName].filter(Boolean).join(' ')]
-        .filter(Boolean)
-        .join(', ');
-    const dataUrl = toAbsoluteUrl(requestUrl);
-    const companyLogo = sanitizeUrl(profile.logo || profile.resultLogo);
-    const agentPhone = contact.phone?.[0]?.phoneFormatted || contact.phonesWithLabels?.[0]?.phone || contact.mobile;
-
-    return pruneRecord({
-        ...summary,
-        finnkode: String(detailData.adId || summary.finnkode || extractFinnCode(requestUrl)),
-        url: sanitizeUrl(dataUrl?.replace(/\.data(?=\?|$)/i, '')) || summary.url,
-        listing_type: summary.listing_type || getSubvertical(requestUrl),
-        status: disposed ? meta.disposed?.label || 'Solgt' : summary.status || 'Til salgs',
-        title: ad.title || summary.title,
-        address: address || summary.address,
-        local_area_name: ad.localAreaName || summary.local_area_name,
-        asking_price: formatMoney(price.suggestion, price.currency) || summary.asking_price,
-        asking_price_nok: price.suggestion ?? summary.asking_price_nok,
-        total_price: formatMoney(price.total, price.currency) || summary.total_price,
-        total_price_nok: price.total ?? summary.total_price_nok,
-        shared_costs_month:
-            formatMoney(ad.sharedCost?.amount || price.commonMonthlyCost, price.currency) || summary.shared_costs_month,
-        shared_costs_month_nok: ad.sharedCost?.amount ?? price.commonMonthlyCost ?? summary.shared_costs_month_nok,
-        municipal_fees_year: formatMoney(price.municipalFees, price.currency),
-        municipal_fees_year_nok: price.municipalFees,
-        property_tax_year: formatMoney(price.estateTax, price.currency),
-        property_tax_year_nok: price.estateTax,
-        tax_value: formatMoney(price.taxValue, price.currency),
-        tax_value_nok: price.taxValue,
-        sales_cost_sum: formatMoney(price.salesCostSum, price.currency),
-        sales_cost_sum_nok: price.salesCostSum,
-        collective_assets: formatMoney(price.collectiveAssets, price.currency),
-        collective_assets_nok: price.collectiveAssets,
-        collective_debt_nok: price.collectiveDebt,
-        property_type: ad.propertyType || summary.property_type,
-        ownership_type: ad.ownershipType || summary.ownership_type,
-        bedrooms: ad.bedrooms ?? summary.bedrooms,
-        rooms: ad.rooms,
-        living_area_sqm: firstNumber(size.usableAreaI, size.livingArea, summary.living_area_sqm),
-        usable_area_sqm: firstNumber(size.usable, summary.usable_area_sqm),
-        external_area_sqm: firstNumber(size.usableAreaE, summary.external_area_sqm),
-        internal_area_sqm: size.usableAreaI,
-        open_area_sqm: size.openArea,
-        balcony_area_sqm: size.openArea,
-        lot_area_sqm: ad.plot?.area ?? summary.lot_area_sqm,
-        plot_owned: ad.plot?.owned,
-        plot_leasehold_point: ad.plot?.leaseholdPoint,
-        floor: ad.floor,
-        build_year: ad.constructionYear,
-        energy_label:
-            typeof ad.energyLabel === 'object' ? ad.energyLabel.class || ad.energyLabel.value : ad.energyLabel,
-        latitude: position.lat ?? summary.latitude,
-        longitude: position.lng ?? summary.longitude,
-        coordinate_accuracy: position.accuracy ?? summary.coordinate_accuracy,
-        postal_code: location.postalCode,
-        postal_name: location.postalName,
-        country_code: location.countryCode,
-        country_name: location.countryName,
-        broker_company: profile.orgName || summary.broker_company,
-        broker_org_id: profile.orgId,
-        broker_homepage_url: homepageUrl || summary.broker_homepage_url,
-        broker_logo_url: companyLogo || summary.broker_logo_url,
-        agent_name: contact.name || summary.agent_name,
-        agent_title: contact.title || summary.agent_title,
-        agent_phone: agentPhone || summary.agent_phone,
-        agent_email: contact.email || summary.agent_email,
-        agent_image_url: sanitizeUrl(contact.image),
-        next_viewing: viewings[0] || summary.next_viewing,
-        viewing_times: ad.viewings,
-        viewing_notes: ad.viewings?.filter((viewing) => viewing?.note).map((viewing) => viewing.note),
-        facilities: Array.isArray(ad.facilities) ? ad.facilities.join(', ') : ad.facilities,
-        facilities_list: ad.facilities,
-        description: firstDescription || stripMarkup(ad.summaryUnsafe) || summary.description,
-        description_sections: descriptionSections.join('\n\n'),
-        image_urls: images.length ? images.map((image) => image.url) : summary.image_urls,
-        initial_image_url: sanitizeUrl(
-            typeof detailData.initialImage === 'string'
-                ? detailData.initialImage
-                : detailData.initialImage?.url || detailData.initialImage?.uri,
-        ),
-        interior_image_urls: normalizeMedia(detailData.interiorImages).map((image) => image.url),
-        neighborhood_addresses: detailData.neighborhoodAddresses,
-        floorplan_urls: floorplans.map((image) => image.url),
-        floorplan_metadata: floorplans,
-        document_urls: documents,
-        more_info_links: moreInfoLinks,
-        ownership_history_url: linkByTitle(/eier|ownership/i),
-        price_statistics_url:
-            sanitizeUrl(detailData.priceStatistics?.url || detailData.priceStatistics?.href) ||
-            linkByTitle(/prisstatistikk|price/i),
-        area_profile_url: summary.area_profile_url,
-        reference: ad.advertiserRef || summary.reference,
-        external_ad_id: ad.externalAdId,
-        advertiser_org_id: profile.orgId,
-        cadastres: ad.cadastres,
-        housing_cooperative: ad.housingCooperative?.name,
-        housing_cooperative_org: ad.housingCooperative?.organisationNumber,
-        shared_cost_includes: stripMarkup(ad.sharedCost?.includesUnsafe),
-        sales_cost_includes: stripMarkup(price.salesCostIncludesUnsafe),
-        prospectus_url: sanitizeUrl(ad.prospectusView || ad.prospectusOrder),
-        electronic_bid_url: sanitizeUrl(ad.electronicBid?.bidUrl),
-        electronic_bid_info_url: sanitizeUrl(ad.electronicBid?.infoUrl),
-        map_image_url: sanitizeUrl(position.mapImage),
-        preemption: ad.preemption,
-        letting_unit: ad.lettingUnit,
-        anonymous: ad.anonymous,
-        ad_view_type_label: ad.adViewTypeLabel,
-        change_of_ownership_insurance: ad.changeOfOwnershipInsurance,
-        seller_emails: uniqueValues(
-            (Array.isArray(ad.sellerEmails) ? ad.sellerEmails : [])
-                .map((entry) => {
-                    if (typeof entry === 'string') return entry;
-                    return entry?.email || entry?.address || entry?.value;
-                })
-                .filter(Boolean),
-        ),
-        last_modified: meta.edited || summary.last_modified,
-        updated_at: meta.edited,
-        published_at: summary.published_at,
-        ad_schema_name: meta.schemaName,
-        ad_schema_version: meta.schemaVersion,
-        meta_mode: meta.mode,
-        meta_version: meta.version,
-        meta_owner_id: meta.ownerId,
-        is_disposed: disposed,
-        is_third_party_advertiser: ad.thirdPartyAdvertiser,
-        searchText: [
-            summary.searchText,
-            address,
-            ad.localAreaName,
-            ad.propertyType,
-            ad.ownershipType,
-            firstDescription?.text,
-        ]
-            .filter(Boolean)
-            .join(' '),
-        scraped_at: new Date().toISOString(),
     });
 }
 
@@ -752,7 +521,6 @@ async function main() {
             ? Math.max(1, Number(rawInput.results_wanted))
             : 20,
         max_pages: Number.isFinite(Number(rawInput.max_pages)) ? Math.max(1, Number(rawInput.max_pages)) : 5,
-        fetch_details: rawInput.fetch_details === true,
     };
 
     const proxyInput = rawInput.proxyConfiguration;
@@ -777,8 +545,6 @@ async function main() {
     const counters = {
         pagesProcessed: 0,
         searchFailures: 0,
-        detailFailures: 0,
-        detailRequests: 0,
         duplicateRecords: 0,
         emptyValuesRemoved: 0,
         savedRecords: 0,
@@ -820,9 +586,9 @@ async function main() {
 
     try {
         log.info(
-            `Start run | results_wanted=${input.results_wanted} | max_pages=${input.max_pages} | fetch_details=${
-                input.fetch_details
-            } | browser=chrome${proxyUrl ? ' | proxy=on' : ''}`,
+            `Start run | results_wanted=${input.results_wanted} | max_pages=${input.max_pages} | browser=chrome${
+                proxyUrl ? ' | proxy=on' : ''
+            }`,
         );
 
         for (let page = initialPage; page < initialPage + input.max_pages; page++) {
@@ -849,33 +615,11 @@ async function main() {
             const documents = Array.isArray(searchResults.docs) ? searchResults.docs : [];
             if (!documents.length) break;
 
-            const summaries = documents
-                .map((document) => mapSearchDocument(document, subvertical))
-                .filter((summary) => matchesFilters(summary, input));
-
-            for (const summary of summaries) {
+            for (const document of documents) {
                 if (counters.savedRecords >= input.results_wanted) break;
 
-                let record = summary;
-
-                if (input.fetch_details) {
-                    try {
-                        const detailUrl = toDetailUrl(summary.url);
-                        if (!detailUrl) throw new Error('listing URL is not a supported Finn.no ad URL');
-
-                        counters.detailRequests++;
-                        const detailPayload = await fetchDecodedPage({
-                            url: detailUrl,
-                            label: `listing ${summary.finnkode}`,
-                        });
-                        record = mapDetailData(getDetailData(detailPayload), summary, detailUrl);
-                    } catch (error) {
-                        counters.detailFailures++;
-                        log.warning(`Listing ${summary.finnkode} detail failed; saving search data: ${error.message}`);
-                    }
-                }
-
-                if (record && matchesFilters(record, input)) await pushRecord(record);
+                const summary = mapSearchDocument(document, subvertical);
+                if (matchesFilters(summary, input)) await pushRecord(summary);
             }
 
             log.info(`Saved page ${page} | total=${counters.savedRecords}/${input.results_wanted}`);
@@ -896,8 +640,6 @@ async function main() {
                 stats.requests
             } | challenges=${stats.challenges} | duplicates=${counters.duplicateRecords} | empty_values_removed=${
                 counters.emptyValuesRemoved
-            } | detail_requests=${counters.detailRequests} | detail_failures=${
-                counters.detailFailures
             } | common_fields=${commonFields}`,
         );
 

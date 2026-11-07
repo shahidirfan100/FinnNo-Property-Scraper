@@ -1,6 +1,5 @@
 {
     "startUrl": "https://www.finn.no/realestate/homes/search.html",
     "results_wanted": 5,
-    "max_pages": 1,
-    "fetch_details": false
+    "max_pages": 1
 }
