@@ -107,6 +107,21 @@ served 403 for a while. Two consequences for the actor:
 The `datadome` cookie is refreshed by Finn on each response, so one browser
 session holds a valid cookie for the whole run.
 
+### Cloud runs
+
+Apify's datacenter proxy passed on the first attempt with headed Chrome and the
+in-page fetch flow:
+
+| Run | Input | Result |
+|-----|-------|--------|
+| 1 | 5 listings, 1 page, no details | 5 saved, 1 request, 0 challenges |
+| 2 | 12 listings, 2 pages, details on | 12 saved, 13 requests, 12 details, 0 failures, 111 fields |
+| 3 | 60 listings, 2 pages, no details | 60 saved, 2 requests, 0 challenges |
+| 4 | Detail URL as `startUrl` | exit code 1 with a clear message |
+
+Run 2 proves the detail path never loads a listing page: 12 detail payloads came
+from 12 in-page `.data` fetches and no navigation.
+
 ## 4. Request flow in the actor
 
 1. `openSession` launches Patchright with `channel: 'chrome'` and

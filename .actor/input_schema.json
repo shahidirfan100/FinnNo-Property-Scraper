@@ -1,6 +1,6 @@
 {
     "title": "Finn.no Property Scraper",
-    "description": "Scrape homes for sale listings from Finn.no. Use the default search page or provide a filtered Finn search URL. By default each result comes from the search results page; optionally enable fetch_details to enrich each listing with property details from the ad page.",
+    "description": "Scrape homes for sale listings from Finn.no. Use the default search page or provide a filtered Finn search URL. By default each result comes from the search results page; optionally enable fetch_details to enrich each listing with data from its public ad payload.",
     "type": "object",
     "schemaVersion": 1,
     "properties": {
@@ -43,7 +43,7 @@
         "fetch_details": {
             "title": "Fetch listing details",
             "type": "boolean",
-            "description": "When enabled, each listing is also enriched from its public ad page with additional fields such as rooms, build year, energy label, facilities, descriptions, floor plans, documents, and broker contacts. When disabled (default), only search result data is saved, which avoids additional listing requests entirely.",
+            "description": "When enabled, each listing is also enriched from its public ad data with additional fields such as rooms, build year, energy label, facilities, descriptions, floor plans, documents, and broker contacts. The data is fetched without loading the listing page. When disabled (default), only search result data is saved, which avoids additional listing requests entirely.",
             "default": false
         },
         "proxyConfiguration": {
