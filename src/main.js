@@ -1,17 +1,20 @@
 import { Actor, log } from 'apify';
 import { Dataset } from 'crawlee';
-import { Impit } from 'impit';
 
 const BASE_URL = 'https://www.finn.no';
 const DEFAULT_START_URL = `${BASE_URL}/realestate/homes/search.html`;
-const MAX_RETRIES = 4;
-const DETAIL_BATCH_SIZE = 5;
+const MAX_RETRIES = 5;
+const FETCH_RETRIES = 2;
 const EMPTY_STRING_LITERALS = new Set(['null', 'undefined', 'nan']);
-const BROWSER_PROFILES = ['chrome136', 'chrome142', 'firefox133'];
-const PROXY_SESSION_COUNT = 5;
-const REQUEST_TIMEOUT_MS = 35000;
+const PAGE_TIMEOUT_MS = 60000;
+const FETCH_TIMEOUT_MS = 40000;
+const LISTING_SELECTOR = 'article.sf-search-ad';
+const DATA_ACCEPT = 'text/x-script; charset=utf-8, */*;q=0.1';
+const CHALLENGE_PATTERN = /captcha-delivery|ddjskey|datadome|please enable js/i;
+// Requests are counted where they happen: inside the page fetch helper.
+const stats = { requests: 0, challenges: 0 };
 
-log.setLevel(log.LEVELS.WARNING);
+log.setLevel(log.LEVELS.INFO);
 await Actor.init();
 
 function normalizeWhitespace(value) {
@@ -141,9 +144,8 @@ function safeJsonParse(value) {
     }
 }
 
-function rehydrateSingleFetch(body) {
-    const references = safeJsonParse(body);
-    if (!Array.isArray(references)) throw new Error('Single-fetch response was not a JSON array');
+function rehydrateReferences(references) {
+    if (!Array.isArray(references)) throw new Error('Page payload was not a reference array');
 
     const cache = new Map();
 
@@ -180,6 +182,21 @@ function rehydrateSingleFetch(body) {
     return resolve(0);
 }
 
+// React Router inlines the same single-fetch stream the legacy .data route
+// returns. Each enqueue() argument is a JSON string chunk of one flat array.
+function extractStreamReferences(html) {
+    const chunks = [];
+    const pattern = /streamController\.enqueue\(("(?:[^"\\]|\\.)*")\)/gs;
+
+    for (const match of html.matchAll(pattern)) {
+        const chunk = safeJsonParse(match[1]);
+        if (typeof chunk === 'string') chunks.push(chunk);
+    }
+
+    if (!chunks.length) return undefined;
+    return safeJsonParse(chunks.join(''));
+}
+
 function findObject(root, predicate) {
     const visited = new Set();
     let found;
@@ -200,6 +217,42 @@ function findObject(root, predicate) {
     return found;
 }
 
+function getSearchResults(payload) {
+    const results = findObject(
+        payload,
+        (value) => Array.isArray(value.docs) && value.metadata && typeof value.metadata === 'object',
+    );
+    if (!results) throw new Error('Search payload did not contain docs plus metadata');
+    return results;
+}
+
+function getDetailData(payload) {
+    const detail = findObject(payload, (value) => value.objectData?.ad && typeof value.objectData.ad === 'object');
+    if (!detail) throw new Error('Detail payload did not contain objectData.ad');
+    return detail;
+}
+
+function decodePayload(body) {
+    const trimmed = body.trimStart();
+    let references;
+
+    if (trimmed.startsWith('[')) {
+        references = safeJsonParse(body);
+    } else {
+        references = extractStreamReferences(body);
+    }
+
+    if (!Array.isArray(references)) {
+        throw new Error(`No React Router payload found (body starts with: ${trimmed.slice(0, 60)})`);
+    }
+
+    return rehydrateReferences(references);
+}
+
+function isChallenge(status, body) {
+    return status === 403 && (CHALLENGE_PATTERN.test(body) || body.length < 5000);
+}
+
 function getSubvertical(url) {
     const { pathname } = new URL(url, BASE_URL);
     return pathname.match(/^\/realestate\/([^/]+)\/(?:search|ad)\.html(?:\.data)?$/i)?.[1] || 'homes';
@@ -213,8 +266,15 @@ function toSearchPageUrl(value, page) {
         throw new Error('startUrl must be a Finn.no real-estate search URL ending in search.html');
     }
 
-    url.pathname = `/realestate/${match[1]}/search.html.data`;
+    url.pathname = `/realestate/${match[1]}/search.html`;
     url.searchParams.set('page', String(page));
+    return url.href;
+}
+
+function toLegacyUrl(value) {
+    const url = new URL(value, BASE_URL);
+    if (/\.html\.data$/i.test(url.pathname)) return url.href;
+    url.pathname = url.pathname.replace(/\.html$/i, '.html.data');
     return url.href;
 }
 
@@ -224,34 +284,13 @@ function toPageReferer(value) {
     return url.href;
 }
 
-function toDetailDataUrl(value) {
+function toDetailUrl(value) {
     const url = new URL(value, BASE_URL);
     const match = url.pathname.match(/^\/realestate\/([^/]+)\/ad\.html(?:\.data)?$/i);
 
     if (!match) return undefined;
-    url.pathname = `/realestate/${match[1]}/ad.html.data`;
+    url.pathname = `/realestate/${match[1]}/ad.html`;
     return url.href;
-}
-
-function toDetailReferer(value) {
-    const url = new URL(value, BASE_URL);
-    url.pathname = url.pathname.replace(/\.data$/i, '');
-    return url.href;
-}
-
-function getSearchResults(payload) {
-    const results = findObject(
-        payload,
-        (value) => Array.isArray(value.docs) && value.metadata && typeof value.metadata === 'object',
-    );
-    if (!results) throw new Error('Could not locate search results in the rehydrated response');
-    return results;
-}
-
-function getDetailData(payload) {
-    const detail = findObject(payload, (value) => value.objectData?.ad && typeof value.objectData.ad === 'object');
-    if (!detail) throw new Error('Could not locate property details in the rehydrated response');
-    return detail;
 }
 
 function formatViewingEntry(entry) {
@@ -363,6 +402,7 @@ function mapSearchDocument(document, subvertical) {
         document_type: document?.type,
         labels: document?.labels,
         listing_flags: document?.flags,
+        features: document?.features,
         styling: document?.styling,
         extras: document?.extras,
         is_private_broker: Array.isArray(document?.labels)
@@ -563,214 +603,118 @@ async function wait(milliseconds) {
     });
 }
 
-class RequestGate {
-    constructor({ rate = 0.6, burst = 1, maxConcurrency = 3, maxRate = 0.9, minRate = 0.1 } = {}) {
-        this.tokens = burst;
-        this.rate = rate;
-        this.burst = burst;
-        this.maxRate = maxRate;
-        this.minRate = minRate;
-        this.maxConcurrency = maxConcurrency;
-        this.inFlight = 0;
-        this.lastRefillAt = Date.now();
-        this.successStreak = 0;
-        this.throttled = 0;
-        this.waiters = [];
-        this.chain = Promise.resolve();
-    }
+function parseProxyUrl(value) {
+    if (!value) return undefined;
+    const url = new URL(value);
 
-    _refill(now) {
-        const elapsed = Math.max(0, (now - this.lastRefillAt) / 1000);
-        this.tokens = Math.min(this.burst, this.tokens + elapsed * this.rate);
-        this.lastRefillAt = now;
-    }
-
-    async _acquireToken() {
-        let now = Date.now();
-        this._refill(now);
-        if (this.tokens < 1) {
-            const needMs = ((1 - this.tokens) / this.rate) * 1000;
-            await wait(needMs + Math.random() * 150);
-            now = Date.now();
-            this._refill(now);
-        }
-        this.tokens -= 1;
-    }
-
-    async _acquireSlot() {
-        while (this.inFlight >= this.maxConcurrency) {
-            await new Promise((resolve) => {
-                this.waiters.push(resolve);
-            });
-        }
-        this.inFlight++;
-    }
-
-    async acquire() {
-        const run = this.chain.then(async () => {
-            await this._acquireToken();
-            await this._acquireSlot();
-            let released = false;
-            return () => {
-                if (released) return;
-                released = true;
-                this.inFlight--;
-                const next = this.waiters.shift();
-                if (next) next();
-            };
-        });
-        this.chain = run.then(
-            () => undefined,
-            () => undefined,
-        );
-        return run;
-    }
-
-    reportSuccess() {
-        this.successStreak++;
-        if (this.successStreak >= 5 && this.rate < this.maxRate) {
-            this.rate = Math.min(this.maxRate, this.rate * 1.1);
-            this.burst = Math.min(2, this.burst + 1);
-            this.successStreak = 0;
-        }
-    }
-
-    reportThrottled(status) {
-        this.successStreak = 0;
-        this.throttled++;
-        if (status === 429) {
-            this.rate = Math.max(this.minRate, this.rate * 0.5);
-            this.burst = 1;
-        } else if (status === 403 || status >= 500) {
-            this.rate = Math.max(this.minRate, this.rate * 0.75);
-        }
-    }
-
-    describe() {
-        return `rate=${this.rate.toFixed(2)}/s burst=${this.burst} inFlight=${this.inFlight} throttled=${this.throttled}`;
-    }
-}
-
-function buildHeaders(referer) {
     return {
-        accept: 'text/x-script; charset=utf-8, */*;q=0.1',
-        'accept-language': 'nb-NO,nb;q=0.9,no;q=0.8,en;q=0.6,en-US;q=0.5',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-site': 'same-origin',
-        referer,
+        server: `${url.protocol}//${url.host}`,
+        ...(url.username && { username: decodeURIComponent(url.username) }),
+        ...(url.password && { password: decodeURIComponent(url.password) }),
     };
 }
 
-function createClient(browser, proxyUrl) {
-    return new Impit({
-        browser,
-        ignoreTlsErrors: true,
-        timeout: REQUEST_TIMEOUT_MS,
-        ...(proxyUrl && { proxyUrl }),
+// Every headless browser and every plain HTTP client is blocked, so the run
+// drives one real Chrome window. The image ships Google Chrome; patchright's
+// bundled Chromium build stays blocked.
+async function launchBrowser(proxyUrl) {
+    const { chromium } = await import('patchright');
+    const proxy = parseProxyUrl(proxyUrl);
+
+    return chromium.launch({
+        headless: false,
+        channel: 'chrome',
+        ...(proxy && { proxy }),
     });
 }
 
-async function buildClients(proxyConfiguration) {
-    if (!proxyConfiguration) {
-        const sharedGate = new RequestGate();
-        return BROWSER_PROFILES.map((browser) => ({ client: createClient(browser), gate: sharedGate }));
-    }
+// One browser session for the whole run: the DataDome cookie it earns is bound
+// to this window and this proxy address.
+const session = { browser: undefined, context: undefined, page: undefined, searchUrl: undefined };
 
-    const sessions = [];
-    if (Array.isArray(proxyConfiguration.proxyUrls) && proxyConfiguration.proxyUrls.length) {
-        sessions.push(...proxyConfiguration.proxyUrls);
-    }
-
-    for (let i = sessions.length; i < PROXY_SESSION_COUNT; i++) {
-        try {
-            sessions.push(await proxyConfiguration.newUrl(`finnno_session_${i}`));
-        } catch {
-            sessions.push(await proxyConfiguration.newUrl());
-        }
-    }
-
-    return sessions.map((proxyUrl, index) => ({
-        client: createClient(BROWSER_PROFILES[index % BROWSER_PROFILES.length], proxyUrl),
-        gate: new RequestGate(),
-    }));
+async function resetContext() {
+    await session.context?.close().catch(() => {});
+    session.context = await session.browser.newContext({ locale: 'nb-NO', timezoneId: 'Europe/Oslo' });
+    session.page = await session.context.newPage();
 }
 
-let entryIndex = 0;
+async function solveChallenge() {
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        // A blocked attempt leaves a datadome cookie behind, so every retry
+        // starts from a clean context instead of reloading the blocked one.
+        if (attempt > 1) await resetContext();
 
-function nextEntry(entries) {
-    const entry = entries[entryIndex % entries.length];
-    entryIndex = (entryIndex + 1) % entries.length;
-    return entry;
-}
+        await session.page.goto(session.searchUrl, { waitUntil: 'load', timeout: PAGE_TIMEOUT_MS });
+        // DataDome reloads the page after its challenge, so real listing markup
+        // is the only reliable pass signal.
+        await session.page.waitForSelector(LISTING_SELECTOR, { timeout: PAGE_TIMEOUT_MS }).catch(() => {});
+        if (await session.page.locator(LISTING_SELECTOR).count()) return;
 
-function computeBackoff(response, status, attempt) {
-    const exponent = attempt - 1;
-
-    if (status === 429) {
-        const retryAfter = Number(response.headers.get('retry-after'));
-        if (Number.isFinite(retryAfter) && retryAfter > 0) return retryAfter * 1000 + Math.random() * 500;
-        return Math.min(4000 * 2 ** exponent, 20000) + Math.random() * 1000;
+        log.warning(`Challenge did not clear (attempt ${attempt}/${MAX_RETRIES})`);
+        if (attempt < MAX_RETRIES) await wait(8000 * attempt);
     }
 
-    if (status === 403 || status === 408 || status === 425) {
-        return Math.min(3500 * 2 ** exponent, 20000) + Math.random() * 1000;
-    }
-
-    return Math.min(1500 * 2 ** exponent, 10000) + Math.random() * 500;
+    throw new Error(`DataDome challenge did not clear at ${session.searchUrl}`);
 }
 
-async function fetchWithRetry(entries, url, options = {}, label = 'request') {
+async function openSession(proxyUrl, searchUrl) {
+    session.browser = await launchBrowser(proxyUrl);
+    session.searchUrl = searchUrl;
+    await resetContext();
+
+    try {
+        await solveChallenge();
+    } catch (error) {
+        await session.browser.close().catch(() => {});
+        throw error;
+    }
+}
+
+// Same-origin fetch from the solved page: the DataDome cookie and browser
+// fingerprint are used as-is, and .data returns the payload without rendering
+// or navigating to a detail page.
+async function fetchInPage(url, label) {
+    for (let attempt = 1; attempt <= FETCH_RETRIES; attempt++) {
+        const result = await session.page.evaluate(
+            async ({ path, accept, timeout }) => {
+                const response = await fetch(path, {
+                    headers: { accept },
+                    signal: AbortSignal.timeout(timeout),
+                });
+                return { status: response.status, text: await response.text() };
+            },
+            { path: url, accept: DATA_ACCEPT, timeout: FETCH_TIMEOUT_MS },
+        );
+
+        stats.requests++;
+        if (result.status === 200) return result.text;
+        if (!isChallenge(result.status, result.text)) throw new Error(`${label} returned HTTP ${result.status}`);
+
+        stats.challenges++;
+        log.warning(`${label} hit a browser challenge (HTTP ${result.status})`);
+        if (attempt === FETCH_RETRIES) break;
+
+        await wait(4000 * attempt);
+        await solveChallenge();
+    }
+
+    throw new Error(`${label} stayed behind the challenge`);
+}
+
+async function fetchDecodedPage({ url, label }) {
     let lastError;
 
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        const { client, gate } = nextEntry(entries);
-        const release = await gate.acquire();
-
+    // The .data route is the cheap path; the rendered HTML carries the same
+    // payload when the data route is unavailable.
+    for (const candidate of [toLegacyUrl(url), url]) {
         try {
-            const response = await client.fetch(url, {
-                ...options,
-                signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-            });
-            const { status } = response;
-
-            if (status === 200) {
-                gate.reportSuccess();
-                return response;
-            }
-
-            lastError = new Error(`${label} returned HTTP ${status}`);
-            if (attempt >= MAX_RETRIES) return response;
-
-            const retryable = status === 429 || status === 403 || status === 408 || status === 425 || status >= 500;
-            if (!retryable) return response;
-
-            gate.reportThrottled(status);
-            const delayMs = computeBackoff(response, status, attempt);
-            log.warning(
-                `${label} retry ${attempt}/${MAX_RETRIES} after HTTP ${status}; backoff=${Math.round(delayMs)}ms; ${gate.describe()}`,
-            );
-            await wait(delayMs);
+            return decodePayload(await fetchInPage(candidate, label));
         } catch (error) {
             lastError = error;
-            if (attempt < MAX_RETRIES) {
-                log.warning(`${label} retry ${attempt}/${MAX_RETRIES}: ${error.message}`);
-                await wait(600 * 2 ** (attempt - 1) + Math.random() * 400);
-            }
-        } finally {
-            release();
         }
     }
 
-    throw lastError || new Error(`${label} failed`);
-}
-
-async function fetchStructuredPayload(entries, url, referer, label) {
-    const response = await fetchWithRetry(entries, url, { headers: buildHeaders(referer) }, label);
-
-    if (!response.ok) throw new Error(`${label} returned HTTP ${response.status}`);
-    const body = await response.text();
-    return rehydrateSingleFetch(body);
+    throw lastError;
 }
 
 function matchesFilters(record, input) {
@@ -791,39 +735,19 @@ function matchesFilters(record, input) {
 
     if (input.keyword && !searchableText.includes(normalizeWhitespace(input.keyword).toLowerCase())) return false;
     if (input.location && !searchableText.includes(normalizeWhitespace(input.location).toLowerCase())) return false;
-    if (input.propertyType && !searchableText.includes(normalizeWhitespace(input.propertyType).toLowerCase()))
-        return false;
-
-    if (Number.isInteger(input.minBedrooms) && input.minBedrooms > 0) {
-        if (!Number.isInteger(record.bedrooms) || record.bedrooms < input.minBedrooms) return false;
-    }
 
     return true;
 }
 
-function collectStartUrls(rawInput) {
-    const urls = [];
-    if (Array.isArray(rawInput.startUrls)) urls.push(...rawInput.startUrls);
-    if (rawInput.startUrl) urls.push(rawInput.startUrl);
-    if (rawInput.url) urls.push(rawInput.url);
-    return uniqueStrings(urls.length ? urls : [DEFAULT_START_URL]);
-}
-
 async function main() {
     const rawInput = (await Actor.getInput()) || {};
-    const requestedLogLevel = normalizeWhitespace(
-        rawInput.logLevel || process.env.APIFY_LOG_LEVEL || 'WARNING',
-    ).toUpperCase();
+    const requestedLogLevel = normalizeWhitespace(process.env.APIFY_LOG_LEVEL || 'INFO').toUpperCase();
     if (log.LEVELS?.[requestedLogLevel]) log.setLevel(log.LEVELS[requestedLogLevel]);
 
     const input = {
         ...rawInput,
         keyword: normalizeWhitespace(rawInput.keyword || ''),
         location: normalizeWhitespace(rawInput.location || ''),
-        minBedrooms: Number.isFinite(Number(rawInput.minBedrooms))
-            ? Math.max(0, Number(rawInput.minBedrooms))
-            : undefined,
-        propertyType: normalizeWhitespace(rawInput.propertyType || ''),
         results_wanted: Number.isFinite(Number(rawInput.results_wanted))
             ? Math.max(1, Number(rawInput.results_wanted))
             : 20,
@@ -834,23 +758,32 @@ async function main() {
     const proxyInput = rawInput.proxyConfiguration;
     const hasCustomProxyUrls = Array.isArray(proxyInput?.proxyUrls) && proxyInput.proxyUrls.length > 0;
     const shouldUseProxy = Boolean(proxyInput?.useApifyProxy) || hasCustomProxyUrls;
-    const proxyConfiguration =
-        shouldUseProxy && Actor.isAtHome() ? await Actor.createProxyConfiguration({ ...proxyInput }) : undefined;
-    const entries = await buildClients(proxyConfiguration);
+    let proxyConfiguration;
+
+    if (shouldUseProxy) {
+        if (Actor.isAtHome() || hasCustomProxyUrls) {
+            proxyConfiguration = await Actor.createProxyConfiguration(proxyInput);
+        } else {
+            log.warning('Apify Proxy is only available on the Apify platform; continuing without it');
+        }
+    }
+
+    const proxyUrl = proxyConfiguration ? await proxyConfiguration.newUrl('finnno') : undefined;
+    const startUrl = uniqueStrings([rawInput.startUrl])[0] || DEFAULT_START_URL;
+    const subvertical = getSubvertical(startUrl);
+    const initialPage = Number.parseInt(new URL(startUrl, BASE_URL).searchParams.get('page') || '1', 10) || 1;
+    await openSession(proxyUrl, toPageReferer(toSearchPageUrl(startUrl, initialPage)));
 
     const counters = {
         pagesProcessed: 0,
         searchFailures: 0,
         detailFailures: 0,
-        detailFallbacks: 0,
         detailRequests: 0,
-        cacheHits: 0,
         duplicateRecords: 0,
         emptyValuesRemoved: 0,
         savedRecords: 0,
     };
     const savedRecordKeys = new Set();
-    const enrichedCache = new Map();
     const datasetBuffer = [];
     const fieldCounts = new Map();
     let flushChain = Promise.resolve();
@@ -885,29 +818,29 @@ async function main() {
         return true;
     }
 
-    log.info(
-        `Start run | results_wanted=${input.results_wanted} | max_pages=${input.max_pages} | fetch_details=${
-            input.fetch_details
-        } | clients=${entries.length}${proxyConfiguration ? ' | proxy=on' : ''}`,
-    );
-
-    for (const startUrl of collectStartUrls(rawInput)) {
-        if (counters.savedRecords >= input.results_wanted) break;
-
-        const subvertical = getSubvertical(startUrl);
-        const cleanReferer = toPageReferer(startUrl);
-        const initialPage = Number.parseInt(new URL(startUrl, BASE_URL).searchParams.get('page') || '1', 10) || 1;
+    try {
+        log.info(
+            `Start run | results_wanted=${input.results_wanted} | max_pages=${input.max_pages} | fetch_details=${
+                input.fetch_details
+            } | browser=chrome${proxyUrl ? ' | proxy=on' : ''}`,
+        );
 
         for (let page = initialPage; page < initialPage + input.max_pages; page++) {
             if (counters.savedRecords >= input.results_wanted) break;
 
+            const searchUrl = toSearchPageUrl(startUrl, page);
             let searchResults;
+
             try {
-                const searchUrl = toSearchPageUrl(startUrl, page);
-                const payload = await fetchStructuredPayload(entries, searchUrl, cleanReferer, `search page ${page}`);
-                searchResults = getSearchResults(payload);
+                searchResults = getSearchResults(
+                    await fetchDecodedPage({
+                        url: searchUrl,
+                        label: `search page ${page}`,
+                    }),
+                );
             } catch (error) {
                 counters.searchFailures++;
+                if (!counters.pagesProcessed) throw error;
                 log.warning(`Search page ${page} failed: ${error.message}`);
                 break;
             }
@@ -920,88 +853,68 @@ async function main() {
                 .map((document) => mapSearchDocument(document, subvertical))
                 .filter((summary) => matchesFilters(summary, input));
 
-            for (
-                let offset = 0;
-                offset < summaries.length && counters.savedRecords < input.results_wanted;
-                offset += DETAIL_BATCH_SIZE
-            ) {
-                const remaining = input.results_wanted - counters.savedRecords;
-                const batch = summaries.slice(offset, offset + Math.min(DETAIL_BATCH_SIZE, remaining));
-                const enriched = await Promise.all(
-                    batch.map(async (summary) => {
-                        if (!input.fetch_details) return { record: summary, fallback: false };
+            for (const summary of summaries) {
+                if (counters.savedRecords >= input.results_wanted) break;
 
-                        try {
-                            const summaryKey = String(summary.finnkode || summary.url || '');
-                            if (enrichedCache.has(summaryKey)) {
-                                counters.cacheHits++;
-                                return { record: enrichedCache.get(summaryKey), fallback: false };
-                            }
+                let record = summary;
 
-                            const detailUrl = toDetailDataUrl(summary.url);
-                            if (!detailUrl) throw new Error('listing URL is not a supported Finn.no ad URL');
+                if (input.fetch_details) {
+                    try {
+                        const detailUrl = toDetailUrl(summary.url);
+                        if (!detailUrl) throw new Error('listing URL is not a supported Finn.no ad URL');
 
-                            counters.detailRequests++;
-                            const detailPayload = await fetchStructuredPayload(
-                                entries,
-                                detailUrl,
-                                toDetailReferer(summary.url),
-                                `listing ${summary.finnkode}`,
-                            );
-                            const detailData = getDetailData(detailPayload);
-                            const record = mapDetailData(detailData, summary, detailUrl);
-                            enrichedCache.set(summaryKey, record);
-                            return { record, fallback: false };
-                        } catch (error) {
-                            counters.detailFailures++;
-                            counters.detailFallbacks++;
-                            log.warning(
-                                `Listing ${summary.finnkode} detail failed; saving search data: ${error.message}`,
-                            );
-                            return { record: summary, fallback: true };
-                        }
-                    }),
-                );
-
-                for (const result of enriched) {
-                    if (counters.savedRecords >= input.results_wanted) break;
-                    if (result.record && matchesFilters(result.record, input)) await pushRecord(result.record);
+                        counters.detailRequests++;
+                        const detailPayload = await fetchDecodedPage({
+                            url: detailUrl,
+                            label: `listing ${summary.finnkode}`,
+                        });
+                        record = mapDetailData(getDetailData(detailPayload), summary, detailUrl);
+                    } catch (error) {
+                        counters.detailFailures++;
+                        log.warning(`Listing ${summary.finnkode} detail failed; saving search data: ${error.message}`);
+                    }
                 }
 
-                log.info(`Saved batch | total=${counters.savedRecords}/${input.results_wanted}`);
+                if (record && matchesFilters(record, input)) await pushRecord(record);
             }
+
+            log.info(`Saved page ${page} | total=${counters.savedRecords}/${input.results_wanted}`);
 
             const lastPage = Number(searchResults.metadata?.paging?.last);
             if ((Number.isInteger(lastPage) && page >= lastPage) || documents.length < 50) break;
         }
+
+        await flushDatasetBuffer(true);
+        const commonFields = [...fieldCounts.entries()]
+            .sort((left, right) => right[1] - left[1])
+            .slice(0, 12)
+            .map(([field, count]) => `${field}=${count}`)
+            .join(', ');
+
+        log.info(
+            `Done | saved=${counters.savedRecords} | pages=${counters.pagesProcessed} | requests=${
+                stats.requests
+            } | challenges=${stats.challenges} | duplicates=${counters.duplicateRecords} | empty_values_removed=${
+                counters.emptyValuesRemoved
+            } | detail_requests=${counters.detailRequests} | detail_failures=${
+                counters.detailFailures
+            } | common_fields=${commonFields}`,
+        );
+
+        if (!counters.pagesProcessed) {
+            throw new Error(
+                'No search page could be fetched. Retry, and check API_DISCOVERY.md if the block persists.',
+            );
+        }
+    } finally {
+        await session.browser.close().catch(() => {});
     }
-
-    await flushDatasetBuffer(true);
-    const commonFields = [...fieldCounts.entries()]
-        .sort((left, right) => right[1] - left[1])
-        .slice(0, 12)
-        .map(([field, count]) => `${field}=${count}`)
-        .join(', ');
-
-    const totalThrottled = entries.reduce((sum, entry) => sum + entry.gate.throttled, 0);
-    const peakRate = entries.reduce((max, entry) => Math.max(max, entry.gate.rate), 0);
-
-    log.info(
-        `Done | saved=${counters.savedRecords} | pages=${counters.pagesProcessed} | cache_hits=${
-            counters.cacheHits
-        } | duplicates=${counters.duplicateRecords} | empty_values_removed=${
-            counters.emptyValuesRemoved
-        } | detail_requests=${counters.detailRequests} | detail_failures=${
-            counters.detailFailures
-        } | throttled=${totalThrottled} | peak_rate=${peakRate.toFixed(2)}/s | common_fields=${commonFields}`,
-    );
 }
 
 main()
+    .then(() => Actor.exit())
     .catch((error) => {
         log.exception(error, 'Actor failed');
-        process.exitCode = 1;
-    })
-    .finally(async () => {
-        await Actor.exit();
+        // Actor.exit() defaults to exit code 0, so a failed run must pass 1.
+        return Actor.exit({ exitCode: 1 });
     });

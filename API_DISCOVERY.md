@@ -1,86 +1,147 @@
-## Selected API
+# Finn.no API discovery
 
-- Search endpoint: https://www.finn.no/realestate/{subvertical}/search.html.data
-- Detail endpoint: https://www.finn.no/realestate/{subvertical}/ad.html.data?finnkode={finnkode}
-- Method: GET
-- Authentication: None observed for public homes-for-sale search and detail data
-- Search pagination: page query parameter, 1-based, with the response metadata providing the final page
-- Search response: JSON array using React Router single-fetch reference encoding; it must be rehydrated before reading the results object
-- Detail response: JSON array using the same reference encoding; the rehydrated route data contains objectData.ad
-- Response markers: Content-Type text/x-script; charset=utf-8, a JSON-array body, search docs plus metadata, or detail objectData.ad
-- Proxy requirement: None observed during discovery; the actor accepts optional Apify Proxy configuration for larger or repeated runs
+Evidence behind the request flow in `src/main.js`. Read this first when a run fails.
 
-## Discovery Results
+Checked: 2026-11-07, against the live site from a Norwegian residential IP and an
+Apify-style cloud run.
 
-The existing actor made HTML requests for search pages and individual ad pages. The supplied run log showed 53 total requests, 16 successful responses, 37 HTTP 429 failures, and only 15 saved listings. The API route avoids the failed HTML detail requests and exposes structured data directly.
+## 1. What Finn.no serves
 
-The search endpoint was tested with:
+| Route | Response | Notes |
+|-------|----------|-------|
+| `/realestate/{vertical}/search.html` | HTML (SSR) | Full search payload inlined in `window.__reactRouterContext` |
+| `/realestate/{vertical}/search.html.data` | `text/x-script` JSON array | Same payload, React Router single-fetch format |
+| `/realestate/{vertical}/ad.html?finnkode={id}` | HTML (SSR) | Full listing payload inlined |
+| `/realestate/{vertical}/ad.html.data?finnkode={id}` | `text/x-script` JSON array | Same payload |
 
-https://www.finn.no/realestate/homes/search.html.data?location=0.20061&sort=PUBLISHED_DESC&page=1
+`{vertical}` is `homes`, `homes/newly-built`, `plots`, `holidays`, and similar.
 
-Observed response:
+The actor uses the `.data` route first and the rendered HTML only as a fallback.
+Both are produced by the same loader, so either one carries the full payload.
 
-- HTTP 200
-- text/x-script; charset=utf-8
-- 238,218-byte body
-- 50 listing documents
-- Pagination metadata with current page, last page, result counts, selected filters, and search title
-- More than 50 useful nested fields across the search documents
+Endpoints that do **not** exist (404): `search.json`, `search.jsonld`,
+`search.rss`, `www.finn.no/api/search`, `api.finn.no/mobile/api/*`. There is no
+public listings API, so the page payload remains the only data source.
 
-The detail endpoint was tested with:
+## 2. Payload format
 
-https://www.finn.no/realestate/homes/ad.html.data?finnkode=470017293
+`search.html.data` returns a flat array of values. Objects store keys as
+`"_<index>"` and reference other entries by numeric index. `src/main.js`
+(`rehydrateReferences`) resolves those references into a normal object.
 
-Observed response:
+```
+[ {"_1":2,"_3":-5}, "loaderData", {"_5":6}, ... ]
+```
 
-- HTTP 200
-- text/x-script; charset=utf-8
-- 166,243-byte body
-- Rehydrated route data with objectData.ad, companyProfile, priceStatistics, prospectus data, floor-plan data, and other listing modules
-- Rich property data including structured prices, areas, coordinates, contact details, images, facilities, descriptions, viewings, cadastral numbers, documents, ownership, construction year, and advertiser references
+Negative numbers are serialization markers, not references, and must be skipped.
 
-## Candidate Matrix
+The SSR HTML embeds the identical stream as escaped JavaScript strings:
 
-| Candidate                              | Header profile                                   | Status/body                                                                | Fields                                            | Pagination              | Decision                                                         |
-| -------------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------- | ------------------------------------------------- | ----------------------- | ---------------------------------------------------------------- |
-| Search search.html.data                | Direct HTTP with browser referer                 | 200, 238 KB, JSON-array single-fetch payload                               | 50+ useful nested fields                          | page, response metadata | Selected for search and pagination                               |
-| Detail ad.html.data                    | Direct HTTP with listing referer                 | 200, 166 KB, JSON-array single-fetch payload                               | 50+ useful nested fields plus rich nested ad data | One listing per request | Selected for detail enrichment                                   |
-| neighborhood-api-alt.json              | Direct HTTP                                      | 200, 4.5 KB JSON                                                           | Neighborhood cards and profile link only          | No listing pagination   | Not used; removed from the fast path                             |
-| searchContext/api                      | Direct HTTP                                      | 200, 6.7 KB JSON                                                           | Price statistics and context data                 | No listing pagination   | Rejected as primary source, kept as a possible supporting source |
-| JSON-LD on search HTML                 | iOS Safari, Android-style, and desktop probes    | 200 HTML, breadcrumb data only                                             | Breadcrumb metadata, not listings                 | None                    | Rejected                                                         |
-| NEXT_DATA and common hydration globals | iOS Safari, Android-style, and desktop probes    | No expected marker found                                                   | None confirmed                                    | None                    | Rejected                                                         |
-| Legacy /api/search-qf                  | Official API documentation and live route checks | Requires FINN API access; legacy public route is not usable for this actor | Potentially rich but authenticated                | API-defined             | Rejected because public actor input has no API key               |
-| URLScan existing scans                 | URLScan domain search                            | Existing Finn scans were found, but result retrieval returned 403          | Not inspectable                                   | Unknown                 | Not used as evidence                                             |
-| URLScan public submission              | Public scan request                              | Current URLScan endpoint returned 401 because an API key was required      | Not available                                     | Unknown                 | Discovery continued with direct HTTP probes                      |
-| HTML parsing                           | Existing Cheerio flow                            | 429-heavy run, 15 saved items                                              | Existing fields only                              | Search-page pagination  | Replaced                                                         |
+```js
+window.__reactRouterContext.streamController.enqueue("[{\"_1\":2,...}]")
+```
 
-## Field Coverage
+`extractStreamReferences` reads every `enqueue("...")` argument, joins the
+chunks, and parses the result. This is why the HTML route works as a fallback.
 
-The existing actor exposed roughly 40 named output fields. The selected route adds reliable structured values for:
+Payload locators, both searched structurally rather than by fixed path:
 
-- Numeric asking, total, shared-cost, tax, collective-asset, and sales-cost values
-- Local area, postal address components, latitude, longitude, and coordinate accuracy
-- Floor, construction year, internal/external/open areas, plot ownership, and cadastral references
-- Image URLs without a separate image-metadata object
-- Facilities as both a readable string and an array
-- Sectioned descriptions and full property information
-- Viewing dates, start/end times, calendar values, and notes
-- Broker organization, contact, logo, homepage, and profile links
-- Floor plans, documents, prospectus links, electronic-bid links, and other public listing links
-- Publication and last-edited timestamps from the search and detail payloads
+| Data | Locator |
+|------|---------|
+| Search results | object containing `docs` array and `metadata` object |
+| Listing detail | object containing `objectData.ad` |
 
-The rewrite preserves the existing output field names and adds API-derived fields where they improve analysis. Empty and null-like values are removed before dataset writes, and records are deduplicated by Finn code or canonical listing URL.
+Key search fields: `docs[].finnkode`, `heading`, `location`, `canonical_url`,
+`price_suggestion.amount`, `price_total.amount`, `price_shared_cost.amount`,
+`area_range`, `area_plot`, `coordinates`, `image_urls`, `viewing_times`,
+`organisation_name`, `timestamp`.
 
-## Request Notes
+Key detail fields: `objectData.ad` (`price`, `size`, `plot`, `viewings`,
+`propertyInfo`, `generalText`, `facilities`, `energyLabel`, `constructionYear`,
+`images`, `documents`, `contact`) and `companyProfile.content`, which holds the
+broker profile as an escaped `<script data-company-profile-data>` blob.
 
-- Discovery requests succeeded without an Apify Proxy.
-- Direct requests used a coherent browser referer for the corresponding public page and an `Accept: text/x-script; charset=utf-8` value compatible with the single-fetch payload.
-- The production actor uses a small pool of impit clients (desktop Chrome and Firefox fingerprints) for connection reuse and consistent TLS/header behavior. It adds only request-specific headers (referer, accept-language, sec-fetch-*) on top of the browser fingerprint generated by impit.
-- Search pages are fetched sequentially up to the user-provided max_pages cap. Listing requests are paced by an adaptive token-bucket gate: it starts near the observed sustainable rate, ramps up after clean streaks, and halves the rate on HTTP 429/403/5xx so bursts no longer trip the source limit. Without a proxy all clients share one gate (same IP, one pacing budget); with Apify Proxy each session gets its own gate and its own IP, so enriched runs scale with the number of sessions.
-- Retries respect the `Retry-After` header, add jittered exponential backoff, and treat 429/403/408/425/5xx as retryable. A listing whose detail fetch still fails is saved from its search API data instead of being lost.
-- The `fetch_details` input toggles listing enrichment on and off; it is disabled by default. Disabled runs only read the search API, which already exposes prices, areas, coordinates, broker company, logo, image dimensions, viewings, and listing flags.
-- The actor stops on empty pages, the API-reported last page, the configured page limit, or the requested result count. Duplicate listings are skipped before a listing request is made, and enriched records are cached per run.
+Paging: `metadata.paging.{current,last,param}`, 50 documents per page, page
+parameter `page`. `metadata.result_size` carries `group_count` and
+`match_count`.
 
-## Implementation Decision
+## 3. DataDome
 
-Use the structured .html.data route as the primary extraction source. Rehydrate the indexed JSON array generically, locate the search result node by its docs and metadata shape, locate detail data by its objectData.ad shape, map all useful public fields from both payloads, omit the slow neighborhood side request and raw diagnostic object from dataset records, and remove the old HTML parsing and old HTTP client.
+Every content route (search, detail, HTML and `.data`) sits behind DataDome.
+`robots.txt`, `/api/` and `sitemap.xml` are open.
+
+What the block looks like: HTTP 403, ~770 bytes,
+`<script data-cfasync="false" src="https://ct.captcha-delivery.com/i.js">`,
+`geo.captcha-delivery.com`, text "Please enable JS and disable any ad blocker".
+
+### Evidence matrix, no cookie present
+
+| Client | Result |
+|--------|--------|
+| impit `chrome151`, `chrome142`, `chrome136`, `chrome131` | 403 |
+| impit `firefox158`, `firefox144`, `firefox133` | 403 |
+| impit `okhttp5`, `okhttp4`, `ios18` | 403 |
+| impit with no browser profile | 403 |
+| impit + browser-generated `sec-fetch-*` headers | 403 |
+| Patchright, bundled Chromium, `headless: true` | 403 |
+| Patchright, bundled Chromium, `headless: true` + desktop UA | 403 |
+| Patchright, `channel: 'chrome'`, `headless: true` | 403 |
+| Patchright, `channel: 'chrome'`, `headless: false` | 200, 51 listings, in-page `.data` fetch 200 |
+| Playwright Chromium, `headless: false` (earlier run) | 200, challenge solved |
+
+So the block is decided by the browser fingerprint, not by the IP alone: the
+same address passes once a real browser window has run the challenge. Headless
+mode never passes, including with a spoofed desktop user agent.
+
+### IP reputation matters
+
+Repeatedly hitting the challenge with a headless or already-rejected browser
+lowers the address score. After a burst of failed probes, even headed Chrome was
+served 403 for a while. Two consequences for the actor:
+
+- Never retry a blocked page in a loop without pausing. `solveChallenge` backs
+  off 8 s, 16 s, 24 s, 32 s.
+- Enable Apify Proxy (residential) for production runs. A fresh address per run
+  sidesteps a lowered IP score.
+
+The `datadome` cookie is refreshed by Finn on each response, so one browser
+session holds a valid cookie for the whole run.
+
+## 4. Request flow in the actor
+
+1. `openSession` launches Patchright with `channel: 'chrome'` and
+   `headless: false`. The Playwright base image ships Google Chrome and wraps the
+   start command in xvfb, which is what makes a visible window possible in
+   Docker.
+2. `solveChallenge` navigates once to the search page and waits for
+   `article.sf-search-ad`. A retry closes the context and opens a clean one, so
+   the rejected `datadome` cookie is dropped.
+3. Every search page and every listing is fetched with `fetch()` **inside that
+   page**, same-origin, against the `.data` route. No navigation happens after
+   step 2, so a 20-listing run does not load 20 detail pages.
+4. If an in-page fetch gets 403, `solveChallenge` runs again and the fetch is
+   retried once. The HTML route is tried when the `.data` route fails.
+
+One proxy address is used for the whole run (`newUrl('finnno')`). The cookie is
+bound to that address, so rotating proxy sessions mid-run invalidates it.
+
+## 5. Failure playbook
+
+| Symptom | Check | Action |
+|---------|-------|--------|
+| `DataDome challenge did not clear` | Is the window running headed on a display? | Check `channel` and the xvfb wrapper; headless never passes |
+| 403 after the challenge cleared | `challenges=` counter in the `Done` line | Raise `MAX_RETRIES`, or move to residential proxy |
+| 200 but no docs | `docs` array empty, or payload shape changed | Log the payload keys; the loader route changed |
+| `No React Router payload found` | Body is HTML but no `streamController.enqueue` | Search for `__reactRouterContext` and adjust `extractStreamReferences` |
+| Detail fails, search works | Listing URL not matching `ad.html?finnkode=` | Check `toDetailUrl` and the canonical URL shape |
+| Cookie works then expires mid-run | `challenges=` above zero near the end of a long run | Expected; the session re-solves and continues |
+
+## 6. Re-checking the site
+
+```bash
+npm start
+```
+
+With `storage/key_value_stores/default/INPUT.json` set to a small search. Any
+regression in the endpoint, the payload encoding, or the challenge shows up in
+the first page request. Verify the challenge path before touching the parsers.

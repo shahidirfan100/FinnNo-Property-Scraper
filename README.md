@@ -1,235 +1,257 @@
 ## What does Finn.no Property Scraper do?
 
-Finn.no Property Scraper collects structured property listings from Finn.no, Norway's major marketplace for homes, projects, and planned developments. Provide a Finn.no search URL and receive records with listing identity, prices, property measurements, ownership, broker contacts, viewing details, images, descriptions, and location data.
+Finn.no Property Scraper collects homes for sale from Finn.no, Norway's largest
+property marketplace, and saves them as a clean dataset. Give it a search URL
+from Finn.no and it returns the listings on that page: address, asking price,
+total price, monthly shared costs, property type, ownership type, bedrooms,
+living area, coordinates, broker, photos, and viewing times.
 
-Use the dataset for Norwegian real-estate research, price comparisons, property monitoring, investment analysis, relocation planning, lead generation, or property search products. The Actor preserves numeric price values alongside readable Norwegian price strings, removes empty values, and prevents the same Finn listing from being saved twice.
+By default it reads the search results only, which is the fastest mode. Turn on
+`fetch_details` and each listing is opened as well, adding build year, energy
+label, floor, facilities, room count, full description, floor plans, documents,
+broker contact details, and prospectus links.
+
+The output is ready for spreadsheets, dashboards, price monitoring, or a
+property database. No Finn.no account and no API key are needed.
 
 ## Why use Finn.no Property Scraper?
 
-- **Collect structured property records** - Save Finn codes, canonical listing URLs, titles, addresses, listing types, prices, areas, property categories, and ownership forms.
-- **Compare property economics** - Analyze asking price, total price, shared monthly costs, municipal fees, tax value, sales costs, plot size, and usable areas.
-- **Enrich listings with broker details** - Capture agency names, organization IDs, agent names, titles, phone numbers, email addresses, logos, and public homepages when published.
-- **Understand the location** - Keep postal information, local area names, coordinates, and cadastral references.
-- **Review listing content** - Collect descriptions, facilities, image URLs, floor-plan links, public documents, viewing times, prospectus links, and electronic-bid links.
-- **Run repeat monitoring** - Use Apify schedules, dataset exports, webhooks, spreadsheets, and programmatic access for recurring workflows.
+- **Structured property data** - One row per listing with consistent field names, not copied page text.
+- **Filters that stay on Finn.no** - Area, price range, ownership type, and listing status are applied by Finn.no itself when you pass the search URL.
+- **Full or light runs** - Search-only runs are quick and cheap; detail runs give a deep record per property.
+- **Scheduled runs** - Run daily or hourly to track new listings and price changes, export to CSV, Excel, or JSON, or call the dataset from your own system.
+
+Typical uses: tracking asking prices in a city, watching new listings in a
+neighbourhood, feeding a valuation model, building a broker lead list, or
+collecting market data for analysis.
 
 ## What data can you extract from Finn.no?
 
-Fields are saved when the public listing provides them. Project, planned, parking, and other special listing types can legitimately contain fewer property or broker fields than ordinary home listings.
+| Field | Description |
+|-------|-------------|
+| `finnkode` | Finn.no listing identifier |
+| `url` | Direct link to the listing |
+| `title` | Listing headline |
+| `address` | Street address, postal code, and city |
+| `local_area_name` | Neighbourhood name |
+| `asking_price` | Asking price as text, for example `4 500 000 kr` |
+| `asking_price_nok` | Asking price as a number |
+| `total_price` | Total price including shared debt |
+| `shared_costs_month` | Monthly shared costs (felleskostnader) |
+| `property_type` | Apartment, house, townhouse, and so on |
+| `ownership_type` | Owner, housing cooperative, or share |
+| `bedrooms` | Number of bedrooms |
+| `rooms` | Total rooms, from the listing page |
+| `usable_area_sqm` | Usable area in square metres |
+| `lot_area_sqm` | Plot size for houses |
+| `build_year` | Construction year, from the listing page |
+| `energy_label` | Energy class, from the listing page |
+| `floor` | Floor, from the listing page |
+| `latitude`, `longitude` | GPS coordinates when published |
+| `broker_company` | Estate agency name |
+| `agent_name`, `agent_phone`, `agent_email` | Contact person, from the listing page |
+| `image_url` | Main photo |
+| `image_urls` | All listing photos |
+| `viewing_times` | Published viewing times |
+| `facilities_list` | Balcony, elevator, garage, and similar |
+| `description` | Property description text |
+| `floorplan_urls`, `document_urls` | Floor plans and documents, from the listing page |
+| `published_at` | Listing date |
+| `scraped_at` | When the record was collected |
 
-| Field group         | Fields                                                                                                                                                                                                                                                                                                                                                                                |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Listing identity    | finnkode, url, listing_type, status, title, address, local_area_name, external_ad_id, reference, ad_type, search_id, document_type                                                                                                                                                                                                                                                    |
-| Price values        | asking_price, asking_price_nok, asking_price_unit, total_price, total_price_nok, total_price_unit, shared_costs_month, shared_costs_month_nok, shared_costs_unit, municipal_fees_year, municipal_fees_year_nok, property_tax_year, property_tax_year_nok, tax_value, tax_value_nok, sales_cost_sum, sales_cost_sum_nok, collective_assets, collective_assets_nok, collective_debt_nok |
-| Property details    | property_type, ownership_type, bedrooms, rooms, living_area_sqm, usable_area_sqm, usable_area_sqm_from, usable_area_sqm_to, area_unit, internal_area_sqm, external_area_sqm, open_area_sqm, balcony_area_sqm, lot_area_sqm, lot_area_unit, plot_owned, plot_leasehold_point, floor, build_year, energy_label, housing_cooperative, housing_cooperative_org                            |
-| Location            | postal_code, postal_name, country_code, country_name, latitude, longitude, coordinate_accuracy, cadastres, map_image_url                                                                                                                                                                                                                                                              |
-| Broker and agent    | broker_company, broker_org_id, broker_homepage_url, broker_logo_url, agent_name, agent_title, agent_phone, agent_email, agent_image_url, advertiser_org_id, seller_emails                                                                                                                                                                                                             |
-| Listing content     | description, description_sections, facilities, facilities_list, shared_cost_includes, sales_cost_includes, preemption                                                                                                                                                                                                                                                                 |
-| Media and documents | image_url, image_width, image_height, image_aspect_ratio, image_urls, initial_image_url, interior_image_urls, floorplan_urls, floorplan_metadata, document_urls, more_info_links, prospectus_url, electronic_bid_url, electronic_bid_info_url, neighborhood_addresses                                                                                                                 |
-| Viewings            | next_viewing, viewing_times, viewing_notes, area_profile_url                                                                                                                                                                                                                                                                                                                          |
-| Collection metadata | published_at, published_epoch_ms, last_modified, updated_at, ad_schema_name, ad_schema_version, meta_mode, meta_version, meta_owner_id, listing_flags, styling, labels, is_disposed, is_third_party_advertiser, letting_unit, anonymous, ad_view_type_label, change_of_ownership_insurance, scraped_at                                                                                |
+## How to use Finn.no Property Scraper
 
-## How to scrape Finn.no property listings
+1. Open Finn.no and set the filters you want: area, price, ownership type, or listing status.
+2. Copy the search URL from the address bar.
+3. Paste it into `startUrl`.
+4. Set `results_wanted` and `max_pages`.
+5. Leave `fetch_details` off for a quick run, or turn it on for full property records.
+6. Run the Actor and download the dataset.
 
-1. Open Finn.no and configure a homes-for-sale, project, or planned-property search.
-2. Copy the complete search URL, including Finn.no filters for area, price, property type, ownership, or listing status.
-3. Open this Actor on Apify and enter the URL in startUrl.
-4. Set results_wanted and max_pages. Add optional keyword or location filters when needed. Enable `fetch_details` to enrich each listing from the listing API; by default the Actor runs purely on search API data, which is very fast and makes no listing requests. For large runs with `fetch_details` enabled, turn on Apify Proxy so listing requests spread across rotating IPs and complete faster.
-5. Run the Actor and review the dataset preview.
-6. Download the results or connect the dataset to your reporting, monitoring, or data workflow.
-
-The Actor reads the public Finn.no search API (`search.html.data`) and, when enabled, the listing API (`ad.html.data`) instead of parsing HTML pages. This exposes structured data directly and avoids the HTML detail-page requests that previously triggered HTTP 429 rate limits. Search pages are processed up to the configured page limit, and listing requests run through an adaptive throttle that self-heals: it keeps throughput high while Finn.no allows it and smoothly backs off when the source rate-limits the IP, so runs stay stable without hard failures.
+If you leave `startUrl` empty, the Actor uses the general homes-for-sale search
+in Oslo and the rest of Norway.
 
 ## Input Parameters
 
-| Parameter          | Type    | Required | Runtime default                                  | Description                                                                                                                      |
-| ------------------ | ------- | -------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| startUrl           | String  | No       | https://www.finn.no/realestate/homes/search.html | Finn.no homes-for-sale search URL. Use a finished URL so Finn.no's own filters are preserved.                                    |
-| keyword            | String  | No       | Empty                                            | Optional text match against listing titles, addresses, property details, descriptions, and local area names.                     |
-| location           | String  | No       | Empty                                            | Optional text match against listing location and address text.                                                                   |
-| results_wanted     | Integer | No       | 20                                               | Maximum number of unique listing records to save.                                                                                |
-| max_pages          | Integer | No       | 5                                                | Maximum number of search result pages to process.                                                                                |
-| fetch_details      | Boolean | No       | false                                            | Enrich each listing from the listing API. Disabled by default so only search API data is fetched (fastest, no extra requests).   |
-| proxyConfiguration | Object  | No       | Disabled (no proxy)                              | Optional Apify Proxy configuration. Leave it disabled to run without a proxy, or enable Apify Proxy for larger or repeated runs. |
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `startUrl` | String | No | `https://www.finn.no/realestate/homes/search.html` | Finn.no property search URL, including any filters |
+| `keyword` | String | No | - | Text filter applied to titles, addresses, and descriptions |
+| `location` | String | No | - | Text filter applied to the location or address |
+| `results_wanted` | Integer | No | `20` | Maximum number of listings to save |
+| `max_pages` | Integer | No | `5` | Maximum number of search pages to read |
+| `fetch_details` | Boolean | No | `false` | Open each listing for build year, energy label, facilities, description, floor plans, and contacts |
+| `proxyConfiguration` | Object | No | Apify Proxy | Proxy settings for the run |
+
+`startUrl` accepts any Finn.no real-estate search page, for example
+`https://www.finn.no/realestate/homes/search.html?price_from=3000000&price_to=6000000`.
+Filters in the URL are kept as they are, so the results match what you see on
+Finn.no.
 
 ## Output Data
 
-The output keeps numeric measurements and prices as numbers where available, while formatted financial fields such as asking_price retain the source-style Norwegian currency display. Every record is cleaned before saving, so null, empty, and duplicate values are not written to the dataset.
+| Field | Type | Description |
+|-------|------|-------------|
+| `finnkode` | String | Listing identifier |
+| `url` | String | Listing URL |
+| `listing_type` | String | Real-estate section, for example `homes` |
+| `status` | String | Listing status, `Til salgs` for active listings |
+| `title` | String | Listing headline |
+| `address` | String | Full address |
+| `asking_price` | String | Asking price as text |
+| `asking_price_nok` | Number | Asking price as a number |
+| `total_price` | String | Total price as text |
+| `total_price_nok` | Number | Total price as a number |
+| `shared_costs_month_nok` | Number | Monthly shared costs |
+| `property_type` | String | Property type |
+| `ownership_type` | String | Ownership form |
+| `bedrooms` | Integer | Bedroom count |
+| `rooms` | Integer | Room count, detail runs |
+| `usable_area_sqm` | Number | Usable area |
+| `lot_area_sqm` | Number | Plot area |
+| `build_year` | Integer | Construction year, detail runs |
+| `energy_label` | String | Energy class, detail runs |
+| `latitude` | Number | GPS latitude |
+| `longitude` | Number | GPS longitude |
+| `broker_company` | String | Estate agency |
+| `agent_name` | String | Contact person, detail runs |
+| `agent_phone` | String | Contact phone, detail runs |
+| `image_urls` | Array | Photo URLs |
+| `viewing_times` | Array | Viewing times |
+| `facilities_list` | Array | Property facilities, detail runs |
+| `description` | String | Description text, detail runs |
+| `scraped_at` | String | ISO timestamp |
 
-| Field                  | Example          | Description                                                                  |
-| ---------------------- | ---------------- | ---------------------------------------------------------------------------- |
-| finnkode               | 471526900        | Finn.no listing identifier.                                                  |
-| asking_price_nok       | 8890000          | Numeric asking price in NOK.                                                 |
-| total_price_nok        | 9224075          | Numeric total price in NOK.                                                  |
-| usable_area_sqm        | 105              | Usable property area in square meters.                                       |
-| latitude and longitude | 59.9137, 10.7245 | Public listing coordinates when available.                                   |
-| description_sections   | String           | Flattened, cleaned sections with headings and text separated by blank lines. |
-| image_urls             | Array            | Public property image URLs from the listing.                                 |
-| more_info_links        | Array            | Public links such as viewing registration or sales documents.                |
-| scraped_at             | ISO timestamp    | Time when the record was saved.                                              |
+Fields from the listing page are filled only when `fetch_details` is on. Missing
+values mean Finn.no does not publish that detail for the listing.
 
 ## Usage Examples
 
-### Basic property search
+### Basic run
 
-Collect up to 20 listings from the default Finn.no homes-for-sale search.
+Collect the first 20 homes for sale:
 
 ```json
 {
-    "startUrl": "https://www.finn.no/realestate/homes/search.html",
-    "results_wanted": 20,
-    "max_pages": 2
+  "startUrl": "https://www.finn.no/realestate/homes/search.html",
+  "results_wanted": 20
 }
 ```
 
-### Area-filtered search
+### Filtered search with full details
 
-Use a completed Finn.no search URL for an area and keep the run within two result pages.
+Read a filtered Oslo search and open every listing:
 
 ```json
 {
-    "startUrl": "https://www.finn.no/realestate/homes/search.html?location=0.20061",
-    "results_wanted": 50,
-    "max_pages": 2
+  "startUrl": "https://www.finn.no/realestate/homes/search.html?location=0.20061&price_to=6000000",
+  "results_wanted": 50,
+  "max_pages": 3,
+  "fetch_details": true
 }
 ```
 
-### Keyword and location filtering
+### Keyword filter across several pages
 
-Apply additional text filters to retain listings that mention a garage in Trondheim.
+Keep listings whose address or title mentions a neighbourhood:
 
 ```json
 {
-    "startUrl": "https://www.finn.no/realestate/homes/search.html",
-    "keyword": "garasje",
-    "location": "Trondheim",
-    "results_wanted": 30,
-    "max_pages": 5
+  "startUrl": "https://www.finn.no/realestate/homes/search.html",
+  "keyword": "Grünerløkka",
+  "location": "Oslo",
+  "results_wanted": 100,
+  "max_pages": 5
 }
 ```
 
 ## Sample Output
 
-This sample shows the shape of a detailed property record. Fields not published by a particular listing are omitted.
-
 ```json
 {
-    "finnkode": "471526900",
-    "url": "https://www.finn.no/realestate/homes/ad.html?finnkode=471526900",
-    "listing_type": "homes",
-    "status": "Til salgs",
-    "title": "Pen og klassisk 4-roms leilighet i attraktive Vika",
-    "address": "Huitfeldts gate 14D, 0253 Oslo",
-    "local_area_name": "VIKA",
-    "asking_price": "8 890 000 kr",
-    "asking_price_nok": 8890000,
-    "total_price": "9 224 075 kr",
-    "total_price_nok": 9224075,
-    "shared_costs_month": "6 140 kr",
-    "shared_costs_month_nok": 6140,
-    "property_type": "Leilighet",
-    "ownership_type": "Andel",
-    "bedrooms": 2,
-    "rooms": 3,
-    "living_area_sqm": 95,
-    "usable_area_sqm": 95,
-    "external_area_sqm": 10,
-    "lot_area_sqm": 323,
-    "floor": 1,
-    "build_year": 1892,
-    "energy_label": "G",
-    "postal_code": "0253",
-    "postal_name": "Oslo",
-    "latitude": 59.9137,
-    "longitude": 10.7245,
-    "broker_company": "Nordvik Frogner",
-    "agent_name": "Example Property Agent",
-    "agent_title": "Eiendomsmegler",
-    "agent_phone": "46 00 00 00",
-    "agent_email": "agent@example.com",
-    "next_viewing": "09.08.2026 15:00-16:00",
-    "facilities": "Bredbåndstilknytning, Hage, Sentralt",
-    "description": "Gjennomgående leilighet med sentral beliggenhet og klassiske detaljer.",
-    "image_urls": ["https://images.finncdn.no/sample/property-image.jpg"],
-    "viewing_times": [
-        {
-            "date": "09.08.2026",
-            "from": "15:00",
-            "to": "16:00",
-            "dateIso": "2026-08-09"
-        }
-    ],
-    "published_at": "2026-08-02T14:50:57.000Z",
-    "scraped_at": "2026-08-02T14:52:55.416Z"
+  "finnkode": "480441498",
+  "url": "https://www.finn.no/realestate/homes/ad.html?finnkode=480441498",
+  "listing_type": "homes",
+  "status": "Til salgs",
+  "title": "Lys og attraktiv 2-roms fra 2024! Lave FK, heis og solfylt balkong",
+  "address": "Vollebekkveien 2 G, 0598 Oslo",
+  "local_area_name": "Vollebekk",
+  "asking_price": "4 500 000 kr",
+  "asking_price_nok": 4500000,
+  "total_price": "4 638 898 kr",
+  "total_price_nok": 4638898,
+  "shared_costs_month_nok": 3200,
+  "property_type": "Leilighet",
+  "ownership_type": "Eier (Selveier)",
+  "bedrooms": 1,
+  "rooms": 2,
+  "usable_area_sqm": 39,
+  "build_year": 2024,
+  "energy_label": "B",
+  "latitude": 59.9471,
+  "longitude": 10.8752,
+  "broker_company": "Nordvik",
+  "agent_name": "Caroline Wang Langer",
+  "image_url": "https://images.finncdn.no/dynamic/default/2026/8/vertical-2/example.jpg",
+  "viewing_times": ["22. mars 2026, 12:00"],
+  "scraped_at": "2026-11-07T09:12:44.115Z"
 }
 ```
 
-## Tips for best results
+## Tips for Best Results
 
-- **Use a finished Finn.no URL** - Configure area, property type, price range, bedrooms, ownership, and sorting on Finn.no before copying the URL.
-- **Start with a small run** - Test with 10-20 results and one or two pages before collecting a larger market sample.
-- **Control listing detail requests** - `fetch_details` is disabled by default so the Actor saves rich search API data without any listing requests. Enable it for rooms, build year, energy label, descriptions, facilities, and broker contacts. Use Apify Proxy for large enriched runs so listing requests spread across rotating IPs and finish faster.
-- **Use source filters first** - Finn.no's own location and price filters are more precise than a broad text match.
-- **Expect type-specific fields** - New developments, projects, parking spaces, and planned listings can omit prices, bedrooms, build years, broker contacts, or viewing times.
-- **Review the dataset preview** - Check a few listing types before relying on one field as a required value.
-- **Schedule recurring runs** - Use Apify schedules to create periodic market snapshots and compare newly published listings.
-- **Respect source rules** - Collect only data you are allowed to use and keep run volume appropriate for the intended workflow.
+- Copy the search URL after applying filters on Finn.no, so the Actor reads exactly what you see.
+- Start with `results_wanted` around 20 to check the output before scheduling a large run.
+- Keep `max_pages` low for new-listing monitoring; use higher values for a full market snapshot.
+- Turn on `fetch_details` only when you need build year, energy label, facilities, or broker contacts, since it opens every listing.
+- Long runs can hit rate limits near the end; the Actor refreshes its session automatically, but a smaller batch per run is more stable.
+- Apify residential proxies give the most consistent results because Finn.no applies stricter checks to datacenter traffic.
+- When a field is empty, check the listing on Finn.no before assuming the run failed.
 
-## Integrations and export formats
+## Integrations
 
-- **Google Sheets** - Export listings for comparison, reporting, and collaboration.
-- **Airtable** - Build a searchable property database with broker, location, and price fields.
-- **Webhooks** - Notify downstream systems after a run completes.
-- **Make or Zapier** - Trigger alerts, enrichment, CRM updates, or other no-code workflows.
-- **Programmatic access** - Read dataset items and start runs from your own application.
-
-| Format | Useful for                                       |
-| ------ | ------------------------------------------------ |
-| JSON   | Structured processing and application workflows. |
-| CSV    | Spreadsheet analysis and simple imports.         |
-| Excel  | Business reporting and comparison workbooks.     |
-| XML    | Systems that require XML data exchange.          |
+- **Google Sheets** - Send each run to a spreadsheet for filtering and charts.
+- **Webhooks** - Trigger your own system when a run finishes.
+- **Make or Zapier** - Route new listings to email, Slack, or a CRM.
+- **API** - Read the dataset from your own application or data warehouse.
+- **Schedules** - Run daily or hourly to track new listings and price changes.
 
 ## Frequently Asked Questions
 
-### Can I collect properties from a specific Norwegian city or neighborhood?
+### Can I export Finn.no property data to CSV or Excel?
 
-Yes. Configure the area on Finn.no, copy the resulting search URL, and provide it through startUrl. You can also use location for an additional text match.
+Yes. Apify datasets download as CSV, Excel, JSON, XML, and other formats from the Console or from the dataset API.
 
-### Does the Actor collect detailed property information?
+### Can I run this Actor on a schedule?
 
-Yes. The dataset can include prices, areas, ownership, coordinates, descriptions, facilities, images, documents, broker contacts, and viewing data.
+Yes. Create a schedule in Apify Console with your search URL and filters. The Actor saves new listings into a dataset on each run.
 
-### Can I collect project and planned properties?
+### Can I scrape other property types, such as plots or holiday homes?
 
-Yes. The Actor processes Finn.no homes, project, and planned listing URLs found in the search results. The available fields depend on the listing type.
+Yes, if Finn.no publishes that search as a real-estate page. Use the matching search URL, for example a plots or holiday-home search page.
 
-### Why is a field missing from a record?
+### Can I use my own filters from Finn.no?
 
-A field is omitted when the public listing does not provide a usable value or when that listing type does not use the field. Project and planned listings commonly have different price, area, broker, and viewing coverage than ordinary homes.
+Yes. Filters in the `startUrl` are kept, so price range, area, ownership type, and listing status apply exactly as they do on Finn.no.
 
-### Does the Actor save duplicate listings?
+### Why are some fields empty?
 
-No. Records are deduplicated by Finn code or canonical listing URL before dataset writes. Empty and null-like values are also removed.
+Fields such as `build_year`, `energy_label`, and `agent_phone` come from the listing page and appear only when `fetch_details` is on and Finn.no publishes them.
 
-### Can I export Finn.no data to CSV or Excel?
+### Does this Actor require a Finn.no login?
 
-Yes. Apify datasets can be downloaded as CSV, Excel, JSON, XML, and other supported formats.
+No. It reads public listing pages. No account, cookie, or API key is needed.
 
-### Is collecting Finn.no data legal?
+### Is it legal to collect data from Finn.no?
 
-Public-data collection may be subject to laws, privacy rules, and Finn.no's terms. You are responsible for using the data lawfully, respecting applicable restrictions, and checking the current rules for your intended use.
-
-## Related Actors
-
-- [iProperty Scraper](https://apify.com/shahidirfan/iproperty-scraper) - Collect Malaysian property listings, prices, locations, and agent details.
-- [Housing.com Property Scraper](https://apify.com/shahidirfan/housing-com-property-scraper) - Collect Indian real-estate listings for market and investment research.
-- [Propertyfinder Scraper](https://apify.com/shahidirfan/propertyfinder-scraper) - Collect UAE property listings with pricing, location, agent, and property details.
+Collecting public web data can be legal, but you are responsible for following Finn.no's terms, Norwegian law, and privacy rules. Use the data for legitimate purposes and do not republish personal contact details without a legal basis.
 
 ## Support
 
-For an issue, unexpected output, or feature request, use the Issues tab on the Actor page in Apify Console. Include the input URL, relevant settings, and an example listing URL when possible. Public listing layouts and available fields can change over time.
+Report a problem or request a field through the Issues tab on the Actor page. Include the search URL, the input you used, and the run log so the issue can be reproduced.
 
 ## Legal Notice
 
-This Actor is intended for legitimate collection of publicly available property information. Users are responsible for complying with Finn.no's terms, applicable laws, privacy obligations, and any restrictions on storing, sharing, or contacting people using collected data.
+This Actor collects publicly available property listings from Finn.no. The
+developer is not affiliated with Finn.no. Users are responsible for how the data
+is used and for complying with applicable law and the website's terms.

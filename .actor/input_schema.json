@@ -1,6 +1,6 @@
 {
     "title": "Finn.no Property Scraper",
-    "description": "Scrape homes for sale listings from Finn.no. Use the default search page or provide a filtered Finn search URL. By default each result is built from the fast search API; optionally enable fetch_details to enrich each listing with property details from the ad page.",
+    "description": "Scrape homes for sale listings from Finn.no. Use the default search page or provide a filtered Finn search URL. By default each result comes from the search results page; optionally enable fetch_details to enrich each listing with property details from the ad page.",
     "type": "object",
     "schemaVersion": 1,
     "properties": {
@@ -9,21 +9,20 @@
             "type": "string",
             "description": "A Finn homes-for-sale search URL. Use this for exact site-side filters such as area, price, ownership type, or listing status.",
             "editor": "textfield",
-            "prefill": "https://www.finn.no/realestate/homes/search.html"
+            "prefill": "https://www.finn.no/realestate/homes/search.html",
+            "default": "https://www.finn.no/realestate/homes/search.html"
         },
         "keyword": {
             "title": "Keyword filter",
             "type": "string",
             "description": "Optional text filter matched against listing titles, addresses, and scraped detail text.",
-            "editor": "textfield",
-            "prefill": ""
+            "editor": "textfield"
         },
         "location": {
             "title": "Location filter",
             "type": "string",
             "description": "Optional text filter matched against the location or address text already visible on Finn pages.",
-            "editor": "textfield",
-            "prefill": ""
+            "editor": "textfield"
         },
         "results_wanted": {
             "title": "Maximum number of listings",
@@ -31,7 +30,6 @@
             "description": "The maximum number of dataset items to save.",
             "minimum": 1,
             "default": 20,
-            "prefill": 20,
             "editor": "number"
         },
         "max_pages": {
@@ -40,23 +38,21 @@
             "description": "Safety cap for paginated search result pages.",
             "minimum": 1,
             "default": 5,
-            "prefill": 2,
             "editor": "number"
         },
         "fetch_details": {
             "title": "Fetch listing details",
             "type": "boolean",
-            "description": "When enabled, each listing is also enriched from the public listing API (ad.html.data) with additional fields such as rooms, build year, energy label, facilities, descriptions, floor plans, documents, and broker contacts. When disabled (default), only the search API data is saved, which avoids additional listing requests entirely.",
-            "default": false,
-            "prefill": false
+            "description": "When enabled, each listing is also enriched from its public ad page with additional fields such as rooms, build year, energy label, facilities, descriptions, floor plans, documents, and broker contacts. When disabled (default), only search result data is saved, which avoids additional listing requests entirely.",
+            "default": false
         },
         "proxyConfiguration": {
             "title": "Proxy configuration",
             "type": "object",
-            "description": "Optional proxy settings. The default flow works without a proxy, but Apify Proxy can help with larger runs.",
+            "description": "Apify Proxy is recommended for consistent access. Residential proxies are the most reliable option for larger runs.",
             "editor": "proxy",
             "default": {
-                "useApifyProxy": false
+                "useApifyProxy": true
             }
         }
     },
