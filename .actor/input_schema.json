@@ -12,18 +12,6 @@
             "prefill": "https://www.finn.no/realestate/homes/search.html",
             "default": "https://www.finn.no/realestate/homes/search.html"
         },
-        "keyword": {
-            "title": "Keyword filter",
-            "type": "string",
-            "description": "Optional text filter matched against listing titles, addresses, property type, ownership type, and neighbourhood name.",
-            "editor": "textfield"
-        },
-        "location": {
-            "title": "Location filter",
-            "type": "string",
-            "description": "Optional text filter matched against the location or address text already visible on Finn pages.",
-            "editor": "textfield"
-        },
         "results_wanted": {
             "title": "Maximum number of listings",
             "type": "integer",

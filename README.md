@@ -80,8 +80,6 @@ in Oslo and the rest of Norway.
 | Parameter            | Type    | Required | Default                                            | Description                                                                                |
 | -------------------- | ------- | -------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `startUrl`           | String  | No       | `https://www.finn.no/realestate/homes/search.html` | Finn.no property search URL, including any filters                                         |
-| `keyword`            | String  | No       | -                                                  | Text filter applied to titles, addresses, property type, ownership type, and neighbourhood |
-| `location`           | String  | No       | -                                                  | Text filter applied to the location or address                                             |
 | `results_wanted`     | Integer | No       | `20`                                               | Maximum number of listings to save                                                         |
 | `max_pages`          | Integer | No       | `5`                                                | Maximum number of search pages to read                                                     |
 | `proxyConfiguration` | Object  | No       | Apify Proxy                                        | Proxy settings for the run                                                                 |
@@ -176,20 +174,6 @@ Read a filtered Oslo search over three pages:
 }
 ```
 
-### Keyword filter across several pages
-
-Keep listings whose address or title mentions a neighbourhood:
-
-```json
-{
-    "startUrl": "https://www.finn.no/realestate/homes/search.html",
-    "keyword": "Grünerløkka",
-    "location": "Oslo",
-    "results_wanted": 100,
-    "max_pages": 5
-}
-```
-
 ## Sample Output
 
 ```json
@@ -237,7 +221,7 @@ Keep listings whose address or title mentions a neighbourhood:
 - Keep `max_pages` low for new-listing monitoring; use higher values for a full market snapshot.
 - Each search page holds up to 50 listings, so `results_wanted` above 50 needs `max_pages` above 1.
 - Long runs can hit rate limits near the end; the Actor refreshes its session automatically, but a smaller batch per run is more stable.
-- Apify residential proxies give the most consistent results because Finn.no applies stricter checks to datacenter traffic.
+- Both datacenter and residential Apify proxies passed in testing; switch to residential if repeated runs start getting challenged.
 - When a field is empty, check the listing on Finn.no before assuming the run failed.
 
 ## Integrations

@@ -4,12 +4,16 @@
 .zed
 
 # crawlee and apify storage folders
-apify_storage
-crawlee_storage
 storage
 
 # installed files
+.venv
+__pycache__
+*.pyc
 node_modules
 
 # git folder
 .git
+
+# analysis notes
+anti-slop
